@@ -28,6 +28,8 @@ from LHM.models.utils import linear
 from .embedder import CameraEmbedder
 from .rendering.synthesizer import TriplaneSynthesizer
 from .transformer import TransformerDecoder
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 logger = get_logger(__name__)
 
@@ -125,6 +127,9 @@ class ModelHumanLRM(nn.Module):
         dense_sample_pts = kwargs.get("dense_sample_pts", 40000)
 
         # original 3DGS Raster
+        # force smplx type as smplx 0 
+        #the model file could not be changed from cfg? so we have to force it here
+        # smplx_type = "smplx_0"
         self.renderer = GS3DRenderer(
             human_model_path=human_model_path,
             subdivide_num=smplx_subdivide_num,
@@ -786,7 +791,8 @@ class ModelHumanLRMSapdinoBodyHeadSD3_5(ModelHumanLRM):
         return gs_model_list, query_points, smplx_params['transform_mat_neutral_pose']
     
 
-    def animation_infer(self, gs_model_list, query_points, smplx_params, render_c2ws, render_intrs, render_bg_colors):
+    def animation_infer(self, gs_model_list, query_points, smplx_params, 
+                        render_c2ws, render_intrs, render_bg_colors,save_gs_model_path=None):
         '''Inference code avoid repeat forward.
         '''
 
@@ -807,6 +813,8 @@ class ModelHumanLRMSapdinoBodyHeadSD3_5(ModelHumanLRM):
                 render_h,
                 render_w,
                 render_bg_colors[:, view_idx : view_idx + 1],
+                save_gs_model_path = save_gs_model_path if view_idx == 0 else None, #only save in the first view
+
             )
             render_res_list.append(render_res)
 

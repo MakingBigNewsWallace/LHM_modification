@@ -31,6 +31,7 @@ from LHM.models.rendering.mesh_utils import Mesh
 from LHM.models.rendering.smplx import smplx
 from LHM.models.rendering.smplx.smplx.lbs import blend_shapes
 from LHM.models.rendering.smplx.vis_utils import render_mesh
+from tools.format_cvt.cvt_LHM_mesh_output import save_points_to_ply
 
 """
 Subdivide a triangle mesh by adding a new vertex at the center of each edge and dividing each face into four new faces.
@@ -503,7 +504,7 @@ class SMPLXVoxelMeshModel(nn.Module):
             cano_pose_type=cano_pose_type,
         )
         self.smplx_layer = copy.deepcopy(self.smpl_x.layer[gender])
-
+        print("expr_param_dim",expr_param_dim)
         # register
         self.apply_pose_blendshape = apply_pose_blendshape
         self.cano_pose_type = cano_pose_type
@@ -524,57 +525,86 @@ class SMPLXVoxelMeshModel(nn.Module):
         for face_id in faces_id_list:
             new_faces_id.append(new_mapping[face_id])
         new_faces_id = torch.from_numpy(np.array(new_faces_id).reshape(faces_id.shape))
-
+        print("new_faces_id",new_faces_id.shape)
         mymesh = Mesh(v=choice_vertices, f=new_faces_id)
 
-        dense_sample_pts = mymesh.sample_surface(num_dense_samples).detach().cpu()
+        dense_sample_pts,faces = mymesh.sample_surface(num_dense_samples)
 
-        return dense_sample_pts
-
+        return dense_sample_pts.detach().cpu(),faces
+    
     def dense_sample(self, body_face_ratio, dense_sample_points):
 
         buff_path = f"./pretrained_models/dense_sample_points/{self.cano_pose_type}_{dense_sample_points}.ply"
+        dense_face_path = f"./pretrained_models/dense_face.ply"
 
-        if os.path.exists(buff_path):
-            dense_sample_pts, _ = load_ply(buff_path)
+        # if os.path.exists(buff_path):
+        #     dense_sample_pts, _ = load_ply(buff_path)
 
-            _bin = dense_sample_points // (body_face_ratio + 1)
-            body_pts = int(_bin * body_face_ratio)
-            self.is_body = torch.arange(dense_sample_pts.shape[0])
-            self.is_body[:body_pts] = 1
-            self.is_body[body_pts:] = 0
-            self.dense_pts = dense_sample_pts
-        else:
-            smpl_x = self.smpl_x
-            body_face_mapping = smpl_x.get_body_face_mapping()
-            face = smpl_x.face
-            template_verts = self.smplx_layer.v_template
+        #     _bin = dense_sample_points // (body_face_ratio + 1)
+        #     body_pts = int(_bin * body_face_ratio)
+        #     self.is_body = torch.arange(dense_sample_pts.shape[0])
+        #     self.is_body[:body_pts] = 1
+        #     self.is_body[body_pts:] = 0
+        #     self.dense_pts = dense_sample_pts
+        # else:
+        print("building mesh for dense sampling")
+        smpl_x = self.smpl_x
+        body_face_mapping = smpl_x.get_body_face_mapping()
+        face = smpl_x.face
+        template_verts = self.smplx_layer.v_template
 
-            _bin = dense_sample_points // (body_face_ratio + 1)
+        _bin = dense_sample_points // (body_face_ratio + 1)
 
-            # build body mesh
-            body_pts = int(_bin * body_face_ratio)
-            body_dict = body_face_mapping["body"]
-            face = body_dict["face"]
-            verts = body_dict["vert"]
+        # build body mesh
+        body_pts = int(_bin * body_face_ratio)
+        body_dict = body_face_mapping["body"]
+        face = body_dict["face"]
+        verts = body_dict["vert"]
 
-            dense_body_pts = self.rebuild_mesh(template_verts, verts, face, body_pts)
+        dense_body_pts,dense_body_faces = self.rebuild_mesh(template_verts, verts, face, body_pts)
 
-            # build face mesh
-            head_pts = int(_bin)
-            head_dict = body_face_mapping["head"]
-            head_face = head_dict["face"]
-            head_verts = head_dict["vert"]
-            dense_head_pts = self.rebuild_mesh(
-                template_verts, head_verts, head_face, head_pts
-            )
+        # build face mesh
+        head_pts = int(_bin)
+        head_dict = body_face_mapping["head"]
+        head_face = head_dict["face"]
+        head_verts = head_dict["vert"]
+        dense_head_pts,dense_head_faces = self.rebuild_mesh(template_verts, head_verts, head_face, head_pts)
 
-            self.dense_pts = torch.cat([dense_body_pts, dense_head_pts], dim=0)
-            self.is_body = torch.arange(self.dense_pts.shape[0])
-            self.is_body[:body_pts] = 1
-            self.is_body[body_pts:] = 0
+        self.dense_pts = torch.cat([dense_body_pts, dense_head_pts], dim=0)
+        import open3d as o3d
 
-            save_ply(buff_path, self.dense_pts)
+        # 创建 Open3D 点云对象
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(self.dense_pts)
+        pcd.estimate_normals()
+        pcd.orient_normals_consistent_tangent_plane(k=30)
+        
+        radii = [0.005, 0.01, 0.02, 0.03, 0.05, 0.1,0.2,0.25]  
+        bpa_mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
+            pcd, o3d.utility.DoubleVector(radii)
+        )
+
+        bpa_mesh.remove_degenerate_triangles()
+        bpa_mesh.remove_duplicated_triangles()
+        bpa_mesh.remove_unreferenced_vertices()
+        bpa_mesh.remove_non_manifold_edges()
+        
+        bpa_mesh = bpa_mesh.filter_smooth_laplacian(number_of_iterations=5)
+
+        bpa_tm = trimesh.Trimesh(vertices=np.asarray(bpa_mesh.vertices),
+                                faces=np.asarray(bpa_mesh.triangles))
+        trimesh.repair.fill_holes(bpa_tm)
+        bpa_tm.export(dense_face_path)
+        # pdb.set_trace()
+
+        self.dense_faces = torch.from_numpy(bpa_tm.faces).long()
+        print("self.dense_pts", self.dense_pts.shape, "dense_new_faces", self.dense_faces.shape)
+        # pdb.set_trace()
+        self.is_body = torch.arange(self.dense_pts.shape[0])
+        self.is_body[:body_pts] = 1
+        self.is_body[body_pts:] = 0
+
+        save_ply(buff_path, self.dense_pts)
 
     @torch.no_grad()
     def voxel_smooth_register(
@@ -791,7 +821,7 @@ class SMPLXVoxelMeshModel(nn.Module):
         shape_dirs = self.smplx_layer.shapedirs.view(
             smpl_x.vertex_num, 3 * smpl_x.shape_param_dim
         )
-
+        print("expr_dirs :", expr_dirs.shape,"query_indx:",query_indx.shape)
         (
             is_rhand,
             is_lhand,
@@ -874,6 +904,29 @@ class SMPLXVoxelMeshModel(nn.Module):
         self.register_buffer("is_upper_body", is_upper_body.contiguous())
         self.register_buffer("is_constrain_body", is_constrain_body.contiguous())
         self.register_buffer("is_cavity", is_cavity.contiguous())
+
+        #pack as a dict and save as pth file
+        smplx_40k_features = {
+            "skinning_weight": skinning_weight,
+            "pose_dirs": pose_dirs,
+            "expr_dirs": expr_dirs,
+            "shape_dirs": shape_dirs,
+            "is_rhand": is_rhand,
+            "is_lhand": is_lhand,
+            "is_face": is_face,
+            "is_face_expr": is_face_expr,
+            "is_lower_body": is_lower_body,
+            "is_upper_body": is_upper_body,
+            "is_constrain_body": is_constrain_body,
+            "is_cavity": is_cavity,
+            "dense_pts": self.dense_pts,
+            "smplx_template_verts": template_verts,
+            "nn_vertex_idxs": nn_vertex_idxs
+
+        }
+        #save the features as pth file
+        torch.save(smplx_40k_features,"/home/wenbo/LHM/exps/smplx_40k_features.pth")
+        print("save smplx_40k_features.pth when smplx voxel mesh model initialized")    
 
         self.vertex_num_upsampled = vertex_num_upsampled
         self.smpl_x.vertex_num_upsampled = vertex_num_upsampled  # compatible with SMPLX
@@ -1396,6 +1449,7 @@ class SMPLXVoxelMeshModel(nn.Module):
         neutral_body_pose = (
             smpl_x.neutral_body_pose.view(1, -1).repeat(batch_size, 1).to(device)
         )  # 大 pose
+        # print("neutral_body_pose:", neutral_body_pose)
         zero_hand_pose = (
             torch.zeros((batch_size, len(smpl_x.joint_part["lhand"]) * 3))
             .float()
@@ -1496,7 +1550,27 @@ class SMPLXVoxelMeshModel(nn.Module):
         _, transform_mat_neutral_pose = batch_rigid_transform(
             pose[:, :, :, :], joint_neutral_pose[:, :, :], self.smplx_layer.parents
         )  # [B, 55, 4, 4]
-
+        #save mesh_neutral_pose_upsampled as ply file, directly using ply without trimesh
+        mesh_neutral_pose_upsampled_ply = mesh_neutral_pose_upsampled.detach().cpu().squeeze().numpy()
+        # save_points_to_ply(mesh_neutral_pose_upsampled_ply, "/home/wenbo/LHM/exps/Gaussians/video_human_benchmark/human-lrm-1B/LHM_mesh_neutral_pose_upsampled_40K.ply",None,None)
+        #or pth
+        LHM_mesh_neutral_pose_dict={
+            "mesh_neutral_pose_upsampled": mesh_neutral_pose_upsampled.detach().cpu(),
+            "mesh_neutral_pose_upsampled_face": self.dense_faces.detach().cpu(),
+            "is_body":self.is_body,
+            "neutral_body_pose":neutral_body_pose,
+            "jaw_pose":jaw_pose,
+            "zero_hand_pose":zero_hand_pose,
+            "zero_pose":zero_pose,  
+            "neutral_body_pose_inv":neutral_body_pose_inv,
+            "mesh_neutral_pose": mesh_neutral_pose.detach().cpu(),
+            "transform_mat_neutral_pose": transform_mat_neutral_pose.detach().cpu(),
+            "joint_neutral_pose": joint_neutral_pose.detach().cpu(),
+            
+        }
+        torch.save(LHM_mesh_neutral_pose_dict, "/home/wenbo/LHM/exps/LHM_mesh_neutral_pose_upsampled_40K.pth")
+        print("LHM_mesh_neutral_pose_upsampled_40K saved as pth file,mesh_neutral_pose_upsampled_face: ", self.dense_faces.shape)
+        
         return (
             mesh_neutral_pose_upsampled,
             mesh_neutral_pose,

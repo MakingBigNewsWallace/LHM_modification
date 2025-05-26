@@ -473,7 +473,7 @@ class SAM2Seg(BaseSeg):
 
         # using for draw box
         # process_img = cv2.rectangle(process_img, bbox[:2], bbox[2:], (0, 0, 255), 2)
-        process_img = process_img.astype(np.float) / 255.0
+        process_img = process_img.astype(np.float32) / 255.0
 
         process_pha_img = (
             img_float * pha[..., None] + (1 - pha[..., None]) * self.background

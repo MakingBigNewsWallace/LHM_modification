@@ -25,6 +25,7 @@ from LHM.models.rendering.utils.typing import *
 from LHM.models.rendering.utils.utils import MLP, trunc_exp
 from LHM.models.utils import LinerParameterTuner, StaticParameterTuner
 from LHM.outputs.output import GaussianAppOutput
+from tools.format_cvt.cvt_LHM_mesh_output import pack_gaussian_asset_and_pos
 
 
 def auto_repeat_size(tensor, repeat_num, axis=0):
@@ -774,7 +775,7 @@ class GS3DRenderer(nn.Module):
 
         self.scaling_modifier = 1.0
         self.sh_degree = sh_degree
-
+        print("smplx type: ", self.smpl_type,subdivide_num)
         if self.smpl_type == "smplx_0" or self.smpl_type == "smplx":
             # Using pytorch3d dense sampling
             self.smplx_model = SMPLXModel(
@@ -1364,6 +1365,7 @@ class GS3DRenderer(nn.Module):
         background_color,
         debug=False,
         df_data=None,  # deepfashion-style dataset
+        save_gs_model_path=None
     ):
         batch_size = len(gs_attr_list)
         out_list = []
@@ -1381,8 +1383,15 @@ class GS3DRenderer(nn.Module):
                 self.get_single_batch_smpl_data(smplx_data, b),
                 debug=debug,
             )
-
+            # cano_gs_model_list[0].save_ply("/home/wenbo/LHM/exps/Gaussians/video_human_benchmark/human-lrm-1B/Adrian_1_Cano.ply")
+            # print("save  CANO ply to", "/home/wenbo/LHM/exps/Gaussians/video_human_benchmark/human-lrm-1B/Adrian_1_Cano.ply")
             animatable_gs_model_list = merge_animatable_gs_model_list[:N_view]
+            '''to save the gs asset into ply and pth file for the very first view'''
+            if save_gs_model_path is not None:
+                # ani_gs_model_list_path="/home/wenbo/LHM/exps/Gaussians/Adrian_1/Exavt_neutral_pose_gs.pth"
+                print("in gs_renderer/forward_animate_gs",type(animatable_gs_model_list[0]), animatable_gs_model_list[0].xyz.shape)
+                pack_gaussian_asset_and_pos(merge_animatable_gs_model_list, query_pt, save_gs_model_path,"GaussianModel")
+
 
             assert len(animatable_gs_model_list) == c2w.shape[1]
 

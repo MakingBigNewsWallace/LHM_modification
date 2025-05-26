@@ -6,6 +6,7 @@
 # @Function      : Inference code for human_lrm model
 
 import argparse
+from email.policy import strict
 import os
 import pdb
 import time
@@ -325,6 +326,7 @@ def parse_configs():
         cfg.image_dump = os.path.join("exps", "images", _relative_path)
         cfg.video_dump = os.path.join("exps", "videos", _relative_path)  # output path
         cfg.mesh_dump = os.path.join("exps", "meshs", _relative_path)  # output path
+        cfg.gs_model_dump = os.path.join("exps", "Gaussians", _relative_path)  # output path
 
     if args.infer is not None:
         cfg_infer = OmegaConf.load(args.infer)
@@ -380,15 +382,17 @@ class HumanLRMInferrer(Inferrer):
             self.parsingnet = None 
 
         self.model: ModelHumanLRM = self._build_model(self.cfg).to(self.device)
-
+        # pdb.set_trace()
         self.motion_dict = dict()
 
     def _build_model(self, cfg):
         from LHM.models import model_dict
 
         hf_model_cls = wrap_model_hub(model_dict[self.EXP_TYPE])
-
-        model = hf_model_cls.from_pretrained(cfg.model_name)
+        print("model name:", cfg.model_name)
+        
+        model = hf_model_cls.from_pretrained(cfg.model_name,strict=False)
+        pdb.set_trace()
         return model
 
     def _default_source_camera(
@@ -624,7 +628,8 @@ class HumanLRMInferrer(Inferrer):
         dump_video_path: str,
         shape_param=None,
     ):
-
+        image_name = os.path.basename(image_path)
+        uid = image_name.split(".")[0]
         source_size = self.cfg.source_size
         render_size = self.cfg.render_size
         # render_views = self.cfg.render_views
@@ -772,6 +777,9 @@ class HumanLRMInferrer(Inferrer):
                         :, batch_i : batch_i + batch_size
                     ].to(device)
 
+                if batch_i == 0:
+                    print("will save gs model to ", os.path.join(self.cfg.gs_model_dump ,f"{uid}_LHM_w_Exavt_neutral_pose_gs.pth"))
+            
                 # def animation_infer(self, gs_model_list, query_points, smplx_params, render_c2ws, render_intrs, render_bg_colors, render_h, render_w):
                 res = self.model.animation_infer(gs_model_list, query_points, batch_smplx_params,
                     render_c2ws=motion_seq["render_c2ws"][
@@ -783,6 +791,8 @@ class HumanLRMInferrer(Inferrer):
                     render_bg_colors=motion_seq["render_bg_colors"][
                         :, batch_i : batch_i + batch_size
                     ].to(device),
+                    save_gs_model_path=os.path.join(self.cfg.gs_model_dump ,f"{uid}_LHM_w_Exavt_neutral_pose_gs.pth") if batch_i == 0 else None
+
                     )
 
             comp_rgb = res["comp_rgb"] # [Nv, H, W, 3], 0-1

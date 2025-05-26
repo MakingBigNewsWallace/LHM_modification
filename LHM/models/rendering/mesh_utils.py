@@ -569,7 +569,7 @@ class Mesh:
         _mesh = trimesh.Trimesh(vertices=self.v.detach().cpu().numpy(), faces=self.f.detach().cpu().numpy())
         points, face_idx = trimesh.sample.sample_surface(_mesh, count)
         points = torch.from_numpy(points).float().to(self.device)
-        return points
+        return points, face_idx
 
     # aabb
     def aabb(self):
