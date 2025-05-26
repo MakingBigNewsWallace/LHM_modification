@@ -382,7 +382,6 @@ class HumanLRMInferrer(Inferrer):
             self.parsingnet = None 
 
         self.model: ModelHumanLRM = self._build_model(self.cfg).to(self.device)
-        # pdb.set_trace()
         self.motion_dict = dict()
 
     def _build_model(self, cfg):
@@ -392,7 +391,6 @@ class HumanLRMInferrer(Inferrer):
         print("model name:", cfg.model_name)
         
         model = hf_model_cls.from_pretrained(cfg.model_name,strict=False)
-        pdb.set_trace()
         return model
 
     def _default_source_camera(
